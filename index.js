@@ -19,7 +19,7 @@ const CarSchema = new mongoose.Schema({
     licensePlate: {
         type: String, 
         required: true,
-        unique: true,
+        unique: false,
         match: /^[A-Z]{3}[0-9]{3}$/,
         validate: {
             validator: function(v) {
@@ -56,14 +56,15 @@ app.post('/cars', async (req, res) => {
   
       // Additional backend logic (e.g., checking if car already exists)
       const existingCar = await Car.findOne({ licensePlate: licensePlate, status: 'inside' });
+      console.log(existingCar);
       if (existingCar) return res.status(400).send("Car is already in the park");
-  
+      
       // Save car to the database
       const car = new Car({ licensePlate:licensePlate, arrivalDate: new Date(), status: 'inside', charge: 0 });
       await car.save();
       res.status(201).send(car);
     } catch (error) {
-      res.status(500).send({ message: 'Internal server error' });
+      res.status(500).send({ message: error.message});
     }
   });
   
@@ -79,8 +80,8 @@ app.post('/deport', async (req, res) => {
         if (!validation.isValid) {
           return res.status(400).send(validation.message);
         }
-    const car = await Car.findOne({ licensePlate: req.body.licensePlate });
-    if (!car || car.status !== 'inside') return res.status(400).send('Car not found or already deported.');
+    const car = await Car.findOne({ licensePlate: req.body.licensePlate, status: "inside" });
+    if (!car || car.status !== 'inside') return res.status(400).send('Car not found .');
 
     const hoursParked = (new Date() - car.arrivalDate) / 1e5;
     const charge = hoursParked * 5;
@@ -118,10 +119,49 @@ app.post('/deported', async (req, res) => {
 })
 
 
+
 app.get('/cars', async (req, res) => {
-    const cars = await Car.find({status: 'inside'});
-    res.send(cars);
+  const { q, _sort = 'licensePlate', _order = 'asc', _page = 1, _limit = 10 } = req.query;
+
+  // Base query object
+  let query = { status: 'inside' };
+
+  // Search query (for licensePlate)
+  if (q) {
+    query.$or = [
+      { licensePlate: { $regex: q, $options: 'i' } }, // Case-insensitive search
+    ];
+  }
+
+  // Sorting logic
+  const sortField = _sort;
+  const sortOrder = _order === 'desc' ? -1 : 1;
+
+  try {
+    // Pagination: Convert _page and _limit to numbers
+    const totalCount = await Car.countDocuments(query);
+    const page = parseInt(_page);
+    const limit = parseInt(_limit);
+    const skip = (page - 1) * limit;
+
+    // Fetch and sort cars with pagination
+    const cars = await Car.find(query)
+      .sort({ [sortField]: sortOrder })
+      .skip(skip)
+      .limit(limit);
+
+    // Send paginated cars along with total count in the response body
+    res.send({
+      cars,
+      totalCount,
+    });
+  } catch (error) {
+    res.status(500).send({ message: 'Server error', error });
+  }
 });
+
+
+
 
 app.get('/revenue', async (req, res) => {
     const deportedCars = await Car.find({status: 'deported'});
@@ -129,9 +169,47 @@ app.get('/revenue', async (req, res) => {
     res.send({ totalRevenue});
 })
 app.get('/deported', async (req, res) => {
-    const deportedCars = await Car.find({ status: 'deported' });
-    res.send(deportedCars);
- });
+  const { q, _sort = 'licensePlate', _order = 'asc', _page = 1, _limit = 10 } = req.query;
+
+  // Base query object
+  let query = { status: 'deported' };
+
+  // Search query (for all columns, assuming 'title' and 'licensePlate' as examples)
+  if (q) {
+    query.$or = [
+      { licensePlate: { $regex: q, $options: 'i' } }, // Case-insensitive search on license plate
+    //  { arrivalDate: { $regex: q, $options: 'i' } }  Case-insensitive search on title
+    ];
+  }
+
+  // Sorting logic
+  const sortField = _sort; // Field to sort by
+  const sortOrder = _order === 'desc' ? -1 : 1; // Sort order: default ascending
+
+  try {
+    // Pagination: Convert _page and _limit to numbers
+    const totalCount = await Car.countDocuments(query);
+    const page = parseInt(_page);
+    const limit = parseInt(_limit);
+    const skip = (page - 1) * limit;
+
+    // Fetch and sort cars with pagination
+    const cars = await Car.find(query)
+      .sort({ [sortField]: sortOrder })
+      .skip(skip)
+      .limit(limit);
+
+    // Send paginated cars along with total count in the response body
+    res.send({
+      cars,
+      totalCount,
+    });
+  } catch (error) {
+    res.status(500).send({ message: 'Server error', error });
+  }
+});
+
+
 app.get("/", (req, res) => {
     res.send("Hello Express!");
 })
@@ -141,68 +219,5 @@ app.listen(port, () =>{
 })
 
 // Example using Fetch API to add 50 objects to your API
-const addCarsTest = async () => {
-  for (let i = 1; i <= 50; i++) {
-    // Generate random letters and numbers for the license plate in ABC123 format
-    const randomPlate = `${getRandomLetter()}${getRandomLetter()}${getRandomLetter()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
-
-    const data = {
-      licensePlate: randomPlate, // Random letters and numbers in ABC123 format
-    };
-    console.log(data.licensePlate)
-    await fetch('http://localhost:3001/cars', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    })
-      .then((response) => response.json())
-      .then((json) => console.log('Added:', json))
-      .catch((error) => console.error('Error:', error.message));
-  }
-};
-const departCarTest = async () => {
-  for (let i = 1; i <= 50; i++) {
-    // Generate random letters and numbers for the license plate in ABC123 format
-    const randomPlate = `${getRandomLetter()}${getRandomLetter()}${getRandomLetter()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
-
-    const data = {
-      licensePlate: randomPlate, // Random letters and numbers in ABC123 format
-    };
-
-    await fetch('http://localhost:3001/deported', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    })
-      .then((response) => response.json())
-      .then((json) => console.log('Added:', json))
-      .catch((error) => console.error('Error:', error.message));
-  }
-};
-
-
-const getRandomLetter = () => {
-  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  return letters[Math.floor(Math.random() * letters.length)];
-};
-// Sleep function that returns a promise
-const sleep = (milliseconds) => {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-};
-
-// Example usage in an async function
-const example = async () => {
-  await sleep(10000); // Sleep for 2 seconds (2000 milliseconds)
-
-  addCarsTest();
-  await sleep(5000); // Sleep for 2 seconds (2000 milliseconds)
-  departCarTest();
-};
-
-example();
 
 
